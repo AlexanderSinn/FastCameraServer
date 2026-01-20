@@ -59,7 +59,7 @@ int _tmain(int argc, _TCHAR* argv[])
 {
 	// initialize omp
 #ifdef _OPENMP
-	omp_set_num_threads(10);
+	omp_set_num_threads(8);
 #pragma omp parallel
 	{
 #pragma omp critical
@@ -76,18 +76,18 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	// Retrieving a handle to the camera device 
 	printf("Opening first camera...\n");
-    SAVECALL(xiOpenDevice(0, &xiH);)
+	SAVECALL(xiOpenDevice(0, &xiH);)
 
-    
-	for (auto& [pname, tname] : all_params) {
-		char result[512] = {};
-		XI_RETURN res = xiGetParamString(xiH, pname, result, 512);
-		std::cout << std::setw(5) << res << " " << std::setw(40) << tname << ": " << result << std::endl;
-	}
+
+		for (auto& [pname, tname] : all_params) {
+			char result[512] = {};
+			XI_RETURN res = xiGetParamString(xiH, pname, result, 512);
+			std::cout << std::setw(5) << res << " " << std::setw(40) << tname << ": " << result << std::endl;
+		}
 
 
 	// Setting "exposure" parameter (10ms=10000us)
-	SAVECALL(xiSetParamInt(xiH, XI_PRM_EXPOSURE, 5));
+	SAVECALL(xiSetParamInt(xiH, XI_PRM_EXPOSURE, 10));
 
 
 	const int im_width = 608;
@@ -98,6 +98,10 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	SAVECALL(xiSetParamInt(xiH, XI_PRM_GAIN, 1000000));
 
+	// set software trigger:
+	SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOURCE, XI_TRG_SOFTWARE));
+
+
 	// Note:
 	// The default parameters of each camera might be different in different API versions
 	// In order to ensure that your application will have camera in expected state,
@@ -106,6 +110,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	printf("Starting acquisition...\n");
 	SAVECALL(xiStartAcquisition(xiH));
 
+	SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOFTWARE, 1));
 	SAVECALL(xiGetImage(xiH, 5000, &image));
 
 	auto last = std::chrono::steady_clock::now();
@@ -115,7 +120,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	long long last_image_num = 0;
 	long long dropped_frames = 0;
 
-	std::vector<long long> time_hist(5000, 0);
+	std::vector<long long> time_hist(1000, 0);
 	std::vector<long long> px_h_hist(image.height, 0);
 	std::vector<long long> px_w_hist(image.width, 0);
 
@@ -123,6 +128,7 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	for (int images = 0; images < expected_images; images++)
 	{
+		SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOFTWARE, 1));
 		SAVECALL(xiGetImage(xiH, 5000, &image));
 
 		if constexpr (do_moments) {
@@ -147,7 +153,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		auto delta = std::chrono::duration<double, std::micro>(current_time - last);
 		last = current_time;
 
-		time_hist[std::max(std::min(static_cast<int>(delta.count()), static_cast<int>(time_hist.size()-1)), 0)] += 1;
+		time_hist[std::max(std::min(static_cast<int>(delta.count()), static_cast<int>(time_hist.size() - 1)), 0)] += 1;
 
 		if (images > 0) {
 			dropped_frames += std::max<long long>((image.nframe - last_image_num - 1), 0);
@@ -158,8 +164,10 @@ int _tmain(int argc, _TCHAR* argv[])
 	}
 
 	std::cout << "time_hist = " << time_hist << std::endl;
-	std::cout << "px_h_hist = " << px_h_hist << std::endl;
-	std::cout << "px_w_hist = " << px_w_hist << std::endl;
+	if constexpr (do_moments) {
+		std::cout << "px_h_hist = " << px_h_hist << std::endl;
+		std::cout << "px_w_hist = " << px_w_hist << std::endl;
+	}
 	std::cout << "dropped_frames = " << dropped_frames << std::endl;
 
 	printf("Stopping acquisition...\n");
@@ -169,4 +177,3 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	return 0;
 }
-
