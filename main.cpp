@@ -67,6 +67,10 @@ int _tmain(int argc, _TCHAR* argv[])
 	}
 #endif
 
+	//std::cout << "Press any key to start..." << std::endl;
+	//char temp_char = 0;
+	//std::cin >> temp_char;
+
 	// image buffer
 	XI_IMG image;
 	memset(&image, 0, sizeof(image));
@@ -92,6 +96,8 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	const int im_width = 608;
 	const int im_height = 608;
+	//const int im_width = 384;
+	//const int im_height = 384;
 
 	SAVECALL(xiSetParamInt(xiH, XI_PRM_WIDTH, im_width));
 	SAVECALL(xiSetParamInt(xiH, XI_PRM_HEIGHT, im_height));
@@ -132,21 +138,29 @@ int _tmain(int argc, _TCHAR* argv[])
 		SAVECALL(xiGetImage(xiH, 5000, &image));
 
 		if constexpr (do_moments) {
-			long long px_sum = 0;
-			long long px_h_sum = 0;
-			long long px_w_sum = 0;
+			float px_sum = 0;
+			float px_h_sum = 0;
+			float px_w_sum = 0;
 
 #pragma omp parallel for reduction(+:px_sum,px_w_sum,px_h_sum)
 			for (int j = 0; j < im_height; ++j) {
+				const float fj = static_cast<float>(j);
+				const auto ptr = (unsigned char*)image.bp + j * im_width;
+				float fi = 0;
 				for (int i = 0; i < im_width; ++i) {
-					long long value = ((unsigned char*)image.bp)[i + j * im_width];
+					float value = static_cast<float>(ptr[i]);
 					px_sum += value;
-					px_w_sum += value * i;
-					px_h_sum += value * j;
+					px_w_sum += value * fi;
+					px_h_sum += value * fj;
+
+					fi += 1;
 				}
 			}
-			px_h_hist[px_h_sum / px_sum] += 1;
-			px_w_hist[px_w_sum / px_sum] += 1;
+
+			px_h_hist[static_cast<int>(px_h_sum / px_sum)] += 1;
+			px_w_hist[static_cast<int>(px_w_sum / px_sum)] += 1;
+
+			//printf("h %lld, w %lld\n", px_h_sum / px_sum, px_w_sum / px_sum);
 		}
 
 		auto current_time = std::chrono::steady_clock::now();
