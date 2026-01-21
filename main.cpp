@@ -119,14 +119,18 @@ int _tmain(int argc, _TCHAR* argv[])
 	SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOFTWARE, 1));
 	SAVECALL(xiGetImage(xiH, 5000, &image));
 
-	auto last = std::chrono::steady_clock::now();
+	//auto last = std::chrono::steady_clock::now();
 
 	constexpr int expected_images = 100000;
 
 	long long last_image_num = 0;
 	long long dropped_frames = 0;
 
-	std::vector<long long> time_hist(1000, 0);
+	std::vector<long long> time_hist1(1000, 0);
+	std::vector<long long> time_hist2(1000, 0);
+	std::vector<long long> time_hist3(1000, 0);
+	std::vector<long long> time_hist4(1000, 0);
+
 	std::vector<long long> px_h_hist(image.height, 0);
 	std::vector<long long> px_w_hist(image.width, 0);
 
@@ -134,15 +138,24 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	for (int images = 0; images < expected_images; images++)
 	{
+		auto t1 = std::chrono::steady_clock::now();
+
 		SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOFTWARE, 1));
+
+		auto t2 = std::chrono::steady_clock::now();
+
 		SAVECALL(xiGetImage(xiH, 5000, &image));
+
+		auto t3 = std::chrono::steady_clock::now();
 
 		if constexpr (do_moments) {
 			float px_sum = 0;
 			float px_h_sum = 0;
 			float px_w_sum = 0;
 
+#ifdef _OPENMP
 #pragma omp parallel for reduction(+:px_sum,px_w_sum,px_h_sum)
+#endif
 			for (int j = 0; j < im_height; ++j) {
 				const float fj = static_cast<float>(j);
 				const auto ptr = (unsigned char*)image.bp + j * im_width;
@@ -163,11 +176,33 @@ int _tmain(int argc, _TCHAR* argv[])
 			//printf("h %lld, w %lld\n", px_h_sum / px_sum, px_w_sum / px_sum);
 		}
 
-		auto current_time = std::chrono::steady_clock::now();
-		auto delta = std::chrono::duration<double, std::micro>(current_time - last);
-		last = current_time;
+		auto t4 = std::chrono::steady_clock::now();
 
-		time_hist[std::max(std::min(static_cast<int>(delta.count()), static_cast<int>(time_hist.size() - 1)), 0)] += 1;
+		//auto current_time = std::chrono::steady_clock::now();
+		//auto delta = std::chrono::duration<double, std::micro>(current_time - last);
+		//last = current_time;
+
+		{
+			auto delta = std::chrono::duration<double, std::micro>(t2 - t1);
+			time_hist1[std::max(std::min(static_cast<int>(delta.count()), static_cast<int>(time_hist1.size() - 1)), 0)] += 1;
+		}
+
+		{
+			auto delta = std::chrono::duration<double, std::micro>(t3 - t2);
+			time_hist2[std::max(std::min(static_cast<int>(delta.count()), static_cast<int>(time_hist2.size() - 1)), 0)] += 1;
+		}
+
+		{
+			auto delta = std::chrono::duration<double, std::micro>(t4 - t3);
+			time_hist3[std::max(std::min(static_cast<int>(delta.count()), static_cast<int>(time_hist3.size() - 1)), 0)] += 1;
+		}
+
+		{
+			auto delta = std::chrono::duration<double, std::micro>(t4 - t1);
+			time_hist4[std::max(std::min(static_cast<int>(delta.count()), static_cast<int>(time_hist4.size() - 1)), 0)] += 1;
+		}
+
+		
 
 		if (images > 0) {
 			dropped_frames += std::max<long long>((image.nframe - last_image_num - 1), 0);
@@ -175,9 +210,20 @@ int _tmain(int argc, _TCHAR* argv[])
 		last_image_num = image.nframe;
 
 		//printf("%f us, ptr %p nframe %d, tsSec %d, tsUSec %d  \n", delta.count(), image.bp, image.nframe, image.tsSec, image.tsUSec);
+
+		while (true) {
+			auto t5 = std::chrono::steady_clock::now();
+			auto delta = std::chrono::duration<double, std::micro>(t5 - t1);
+			if (delta.count() >= 1000.) {
+				break;
+			}
+		}
 	}
 
-	std::cout << "time_hist = " << time_hist << std::endl;
+	std::cout << "time_hist1 = " << time_hist1 << std::endl;
+	std::cout << "time_hist2 = " << time_hist2 << std::endl;
+	std::cout << "time_hist3 = " << time_hist3 << std::endl;
+	std::cout << "time_hist4 = " << time_hist4 << std::endl;
 	if constexpr (do_moments) {
 		std::cout << "px_h_hist = " << px_h_hist << std::endl;
 		std::cout << "px_w_hist = " << px_w_hist << std::endl;
