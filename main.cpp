@@ -24,6 +24,8 @@
 #include <cmath>
 #include <array>
 
+//#include <nvToolsExt.h>
+
 #ifdef min
 #undef min
 #endif
@@ -36,11 +38,23 @@
 	{ \
 		XI_RETURN res = call; \
 		if (res != XI_OK) { \
-			printf("Error after %s (%d)\n", #call, res); \
+			printf("XIMEA Error after %s (%d)\n", #call, res); \
 			std::abort(); \
 		} \
-	} \
+	}
 
+#ifdef __NVCC__
+#define CUDA_SAVECALL(call) \
+    { \
+		cudaError_t res = call; \
+		if (res != cudaSuccess) { \
+			printf("CUDA Error after %s (%s)\n", #call, cudaGetErrorString(res)); \
+			std::abort(); \
+		} \
+	}
+#else
+#define cudaStream_t int
+#endif
 
 template<class T>
 std::ostream& operator<< (std::ostream& os, std::vector<T> const& vec) {
@@ -64,7 +78,8 @@ void print_percent(std::vector<T> vec) {
 
 	std::cout << "fraction:";
 
-	for (double frac : std::array{0.5, 0.9, 0.99, 0.999}) {
+	const std::array arr{0.5, 0.9, 0.99, 0.999};
+	for (auto frac : arr) {
 		T parsum = 0;
 		for (int i = 0; i < vec.size(); ++i) {
 			parsum += vec[i];
@@ -156,7 +171,36 @@ void calc_tile(int nt_h, int nt_w, unsigned char* imager_ptr,
 	}
 }
 
-static
+#ifdef __NVCC__
+__launch_bounds__(256)
+__global__ void gpu_kernel(unsigned char * imdata, int im_width, int im_height)
+{
+	int tidw = threadIdx.x + blockIdx.x * blockDim.x;
+    int tidh = threadIdx.y + blockIdx.y * blockDim.y;
+
+    if (tidw < im_width && tidh < im_height) {
+        imdata[tidw + tidh * im_height] += 1;
+    }
+}
+#endif
+
+void calc_gpu(unsigned char * imdata, int im_width, int im_height,
+              cudaStream_t& stream) {
+#ifdef __NVCC__
+    dim3 blockDim(16, 16);
+    dim3 gridDim;
+    gridDim.x = (im_width + blockDim.x - 1)/blockDim.x;
+    gridDim.y = (im_height + blockDim.y - 1)/blockDim.y;
+    gpu_kernel<<<gridDim, blockDim, 0, stream>>>(imdata, im_width, im_height);
+    CUDA_SAVECALL(cudaStreamSynchronize(stream));
+#endif
+    (void)imdata, (void)im_width, (void)im_height;
+}
+
+
+
+
+inline
 void print_image(XI_IMG& image) {
 	std::cout << "size " << image.size << '\n';
 	std::cout << "bp " << image.bp << '\n';
@@ -174,7 +218,6 @@ void print_image(XI_IMG& image) {
 	std::cout << "AbsoluteOffsetY " << image.AbsoluteOffsetY << '\n';
 	std::cout << "transport_frm " << image.transport_frm << '\n';
 	std::cout << "gain_db " << image.gain_db << '\n';
-
 
 
 	float sum = 0.;
@@ -219,9 +262,21 @@ int _tmain(int argc, _TCHAR* argv[])
 	image.size = SIZE_XI_IMG_V2;
 	image.size = sizeof(image);
 
+#ifdef __NVCC__
+    void * cuda_mem_ptr = nullptr;
+    CUDA_SAVECALL(cudaMallocHost(&cuda_mem_ptr, 1024*1024*64));
+    image.bp = cuda_mem_ptr;
+    image.bp_size = 1024*1024*64;
+
+    cudaStream_t stream;
+    CUDA_SAVECALL(cudaStreamCreate(&stream));
+#else
+    cudaStream_t stream = 0;
+#endif
+
 	HANDLE xiH = NULL;
 
-	// Retrieving a handle to the camera device 
+	// Retrieving a handle to the camera device
 	printf("Opening first camera...\n");
 	SAVECALL(xiOpenDevice(0, &xiH);)
 
@@ -247,20 +302,21 @@ int _tmain(int argc, _TCHAR* argv[])
 	SAVECALL(xiSetParamInt(xiH, XI_PRM_HEIGHT, im_height));
 	SAVECALL(xiSetParamFloat(xiH, XI_PRM_GAIN, 2.3F));
 	SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOURCE, XI_TRG_SOFTWARE));
+    SAVECALL(xiSetParamInt(xiH, XI_PRM_BUFFER_POLICY, XI_BP_SAFE));
+    //SAVECALL(xiSetParamInt(xiH, XI_PRM_TRANSPORT_DATA_TARGET, XI_TRANSPORT_DATA_TARGET_UNIFIED));
 
 	printf("Starting acquisition...\n");
 	SAVECALL(xiStartAcquisition(xiH));
 
 	SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOFTWARE, 1));
-	while (xiGetImage(xiH, 5000, &image) == XI_OK) {}
+	while (xiGetImage(xiH, 1000, &image) == XI_OK) {}
 	//SAVECALL(xiGetImage(xiH, 5000, &image));
-
 
 	//print_image(image);
 
 	int ntiles_h = 20;
 	int ntiles_w = 20;
-		
+
 	constexpr int expected_images = 100000;
 
 	long long last_image_num = 0;
@@ -279,15 +335,24 @@ int _tmain(int argc, _TCHAR* argv[])
 	std::vector<float> tile_sum_h(ntiles_h * ntiles_w, 0.F);
 	std::vector<float> tile_sum_w(ntiles_h * ntiles_w, 0.F);
 
+    for (int i=0; i<1000; ++i) {
+        calc_gpu((unsigned char*)image.bp, im_width, im_height, stream);
+    }
+
 	constexpr bool do_moments = false;
-	constexpr bool do_tiles = true;
+	constexpr bool do_tiles = false;
+    constexpr bool do_gpu_moments = true;
 
 	for (int images = 0; images < expected_images; images++)
 	{
 		auto t1 = std::chrono::steady_clock::now();
 
+        //nvtxRangePush("xiTrigSoftware");
 		SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOFTWARE, 1));
+        //nvtxRangePop();
+        //nvtxRangePush("xiGetImage");
 		SAVECALL(xiGetImage(xiH, 5000, &image));
+        //nvtxRangePop();
 
 		auto t2 = std::chrono::steady_clock::now();
 
@@ -298,6 +363,12 @@ int _tmain(int argc, _TCHAR* argv[])
 		if constexpr (do_tiles) {
 			calc_tile(ntiles_h, ntiles_w, (unsigned char*)image.bp, tile_start_h, tile_start_w, tile_sum_w, tile_sum_h, im_width);
 		}
+
+        if constexpr (do_gpu_moments) {
+            //nvtxRangePush("calc_gpu");
+            calc_gpu((unsigned char*)image.bp, im_width, im_height, stream);
+            //nvtxRangePop();
+        }
 
 		auto t3 = std::chrono::steady_clock::now();
 
@@ -341,6 +412,11 @@ int _tmain(int argc, _TCHAR* argv[])
 	SAVECALL(xiStopAcquisition(xiH));
 	SAVECALL(xiCloseDevice(xiH));
 	printf("Done\n");
+
+#ifdef __NVCC__
+    CUDA_SAVECALL(cudaStreamDestroy(stream));
+    CUDA_SAVECALL(cudaFreeHost(cuda_mem_ptr));
+#endif
 
 	return 0;
 }
