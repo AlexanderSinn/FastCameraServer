@@ -24,7 +24,9 @@
 #include <cmath>
 #include <array>
 
-//#include <nvToolsExt.h>
+#ifdef __NVCC__
+#include <cub/cub.cuh>
+#endif
 
 #ifdef min
 #undef min
@@ -113,7 +115,7 @@ void calc_moments(int im_height, int im_width, unsigned char * imager_ptr,
 			px_w_sum += value * fi;
 			px_h_sum += value * fj;
 
-			fi += 1;
+			fi += 1.F;
 		}
 	}
 
@@ -172,32 +174,72 @@ void calc_tile(int nt_h, int nt_w, unsigned char* imager_ptr,
 }
 
 #ifdef __NVCC__
-__launch_bounds__(256)
-__global__ void gpu_kernel(unsigned char * imdata, int im_width, int im_height)
+__launch_bounds__(512)
+__global__ void gpu_kernel(unsigned char * imdata, int im_width, int im_height, float * gloabl_agg)
 {
+    using BlockReduce = cub::BlockReduce<float, 32, cub::BLOCK_REDUCE_WARP_REDUCTIONS, 16>;
+
+    __shared__ typename BlockReduce::TempStorage temp_storage;
+
 	int tidw = threadIdx.x + blockIdx.x * blockDim.x;
     int tidh = threadIdx.y + blockIdx.y * blockDim.y;
 
+    float im_value[4] = {0.F, 0.F, 0.F, 0.F};
+
     if (tidw < im_width && tidh < im_height) {
-        imdata[tidw + tidh * im_height] += 1;
+        auto pack_im = reinterpret_cast<uchar4*>(imdata);
+        uchar4 packed_data = pack_im[tidw + tidh * im_width];
+        im_value[0] = static_cast<float>(packed_data.x);
+        im_value[1] = static_cast<float>(packed_data.y);
+        im_value[2] = static_cast<float>(packed_data.z);
+        im_value[3] = static_cast<float>(packed_data.w);
+    }
+
+    float f_tidw = static_cast<float>(4*tidw);
+    float im_w = (
+        im_value[0] * f_tidw +
+        im_value[1] * (f_tidw + 1.F) +
+        im_value[2] * (f_tidw + 2.F) +
+        im_value[3] * (f_tidw + 3.F)
+    );
+    float im_h = static_cast<float>(tidh) * (
+        im_value[0] +
+        im_value[1] +
+        im_value[2] +
+        im_value[3]
+    );
+
+    float aggs = BlockReduce(temp_storage).Sum(im_value);
+    float aggw = BlockReduce(temp_storage).Sum(im_w);
+    float aggh = BlockReduce(temp_storage).Sum(im_h);
+
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+        atomicAdd(gloabl_agg + 0, aggs);
+        atomicAdd(gloabl_agg + 1, aggw);
+        atomicAdd(gloabl_agg + 2, aggh);
     }
 }
 #endif
 
 void calc_gpu(unsigned char * imdata, int im_width, int im_height,
-              cudaStream_t& stream) {
+              cudaStream_t& stream, float * gloabal_agg,
+              std::vector<long long>& px_h_hist, std::vector<long long>& px_w_hist) {
 #ifdef __NVCC__
-    dim3 blockDim(16, 16);
+    gloabal_agg[0] = 0.F;
+    gloabal_agg[1] = 0.F;
+    gloabal_agg[2] = 0.F;
+    dim3 blockDim(32, 16);
     dim3 gridDim;
-    gridDim.x = (im_width + blockDim.x - 1)/blockDim.x;
+    gridDim.x = ((im_width+3)/4 + blockDim.x - 1)/blockDim.x;
     gridDim.y = (im_height + blockDim.y - 1)/blockDim.y;
-    gpu_kernel<<<gridDim, blockDim, 0, stream>>>(imdata, im_width, im_height);
+    gpu_kernel<<<gridDim, blockDim, 0, stream>>>(imdata, im_width/4, im_height, gloabal_agg);
     CUDA_SAVECALL(cudaStreamSynchronize(stream));
+
+	px_w_hist[static_cast<int>(gloabal_agg[1] / gloabal_agg[0])] += 1;
+    px_h_hist[static_cast<int>(gloabal_agg[2] / gloabal_agg[0])] += 1;
 #endif
     (void)imdata, (void)im_width, (void)im_height;
 }
-
-
 
 
 inline
@@ -262,14 +304,14 @@ int _tmain(int argc, _TCHAR* argv[])
 	image.size = SIZE_XI_IMG_V2;
 	image.size = sizeof(image);
 
+    float * cuda_mem_ptr = nullptr;
 #ifdef __NVCC__
-    void * cuda_mem_ptr = nullptr;
-    CUDA_SAVECALL(cudaMallocHost(&cuda_mem_ptr, 1024*1024*64));
-    image.bp = cuda_mem_ptr;
-    image.bp_size = 1024*1024*64;
-
+    CUDA_SAVECALL(cudaMallocManaged(&cuda_mem_ptr, sizeof(float) * 3));
+    int priority_low = 0;
+    int priority_high = 0;
+    CUDA_SAVECALL(cudaDeviceGetStreamPriorityRange(&priority_low, &priority_high));
     cudaStream_t stream;
-    CUDA_SAVECALL(cudaStreamCreate(&stream));
+    CUDA_SAVECALL(cudaStreamCreateWithPriority(&stream, cudaStreamNonBlocking, priority_high));
 #else
     cudaStream_t stream = 0;
 #endif
@@ -291,10 +333,10 @@ int _tmain(int argc, _TCHAR* argv[])
 	//const int im_height = 608;
 	//const int im_width = 384;
 	//const int im_height = 384;
-	const int im_width = 608;
-	const int im_height = 608;
+	const int im_width = 608*2;
+	const int im_height = 608*2;
 
-	SAVECALL(xiSetParamInt(xiH, XI_PRM_DOWNSAMPLING, XI_DWN_2x2));
+	//SAVECALL(xiSetParamInt(xiH, XI_PRM_DOWNSAMPLING, XI_DWN_2x2));
 	SAVECALL(xiSetParamInt(xiH, XI_PRM_DOWNSAMPLING_TYPE, XI_BINNING));
 
 	SAVECALL(xiSetParamInt(xiH, XI_PRM_EXPOSURE, 10));
@@ -302,8 +344,11 @@ int _tmain(int argc, _TCHAR* argv[])
 	SAVECALL(xiSetParamInt(xiH, XI_PRM_HEIGHT, im_height));
 	SAVECALL(xiSetParamFloat(xiH, XI_PRM_GAIN, 2.3F));
 	SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOURCE, XI_TRG_SOFTWARE));
-    SAVECALL(xiSetParamInt(xiH, XI_PRM_BUFFER_POLICY, XI_BP_SAFE));
-    //SAVECALL(xiSetParamInt(xiH, XI_PRM_TRANSPORT_DATA_TARGET, XI_TRANSPORT_DATA_TARGET_UNIFIED));
+    //SAVECALL(xiSetParamInt(xiH, XI_PRM_BUFFER_POLICY, XI_BP_SAFE));
+
+    SAVECALL(xiSetParamInt(xiH, XI_PRM_BUFFER_POLICY, XI_BP_UNSAFE));
+    SAVECALL(xiSetParamInt(xiH, XI_PRM_IMAGE_DATA_FORMAT, XI_FRM_TRANSPORT_DATA));
+    SAVECALL(xiSetParamInt(xiH, XI_PRM_TRANSPORT_DATA_TARGET, XI_TRANSPORT_DATA_TARGET_ZEROCOPY));
 
 	printf("Starting acquisition...\n");
 	SAVECALL(xiStartAcquisition(xiH));
@@ -336,8 +381,12 @@ int _tmain(int argc, _TCHAR* argv[])
 	std::vector<float> tile_sum_w(ntiles_h * ntiles_w, 0.F);
 
     for (int i=0; i<1000; ++i) {
-        calc_gpu((unsigned char*)image.bp, im_width, im_height, stream);
+        calc_gpu((unsigned char*)image.bp, im_width, im_height, stream, cuda_mem_ptr,
+                 px_h_hist, px_w_hist);
     }
+
+    px_h_hist.assign(px_h_hist.size(), 0.F);
+    px_w_hist.assign(px_w_hist.size(), 0.F);
 
 	constexpr bool do_moments = false;
 	constexpr bool do_tiles = false;
@@ -361,12 +410,14 @@ int _tmain(int argc, _TCHAR* argv[])
 		}
 
 		if constexpr (do_tiles) {
-			calc_tile(ntiles_h, ntiles_w, (unsigned char*)image.bp, tile_start_h, tile_start_w, tile_sum_w, tile_sum_h, im_width);
+			calc_tile(ntiles_h, ntiles_w, (unsigned char*)image.bp, tile_start_h, tile_start_w,
+                      tile_sum_w, tile_sum_h, im_width);
 		}
 
         if constexpr (do_gpu_moments) {
             //nvtxRangePush("calc_gpu");
-            calc_gpu((unsigned char*)image.bp, im_width, im_height, stream);
+            calc_gpu((unsigned char*)image.bp, im_width, im_height, stream, cuda_mem_ptr,
+                     px_h_hist, px_w_hist);
             //nvtxRangePop();
         }
 
@@ -395,7 +446,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	std::cout << "time_hist2 = " << time_hist2 << std::endl;
 	print_percent(time_hist2);
 
-	if constexpr (do_moments) {
+	if constexpr (do_moments || do_gpu_moments) {
 		std::cout << "px_h_hist = " << px_h_hist << std::endl;
 		std::cout << "px_w_hist = " << px_w_hist << std::endl;
 	}
@@ -415,7 +466,7 @@ int _tmain(int argc, _TCHAR* argv[])
 
 #ifdef __NVCC__
     CUDA_SAVECALL(cudaStreamDestroy(stream));
-    CUDA_SAVECALL(cudaFreeHost(cuda_mem_ptr));
+    CUDA_SAVECALL(cudaFree(cuda_mem_ptr));
 #endif
 
 	return 0;
