@@ -6,16 +6,16 @@ PROGRAM=FCS
 all: $(PROGRAM)
 
 $(PROGRAM): $(OBJECTS)
-	$(CXX) -g $(OBJECTS) -o $@ -lm3api -O3 -march=native -forward-unknown-to-host-compiler -std=c++17 -lnvToolsExt
+    $(CXX) -g $(OBJECTS) -o $@ -lm3api -O3 -march=native -forward-unknown-to-host-compiler -std=c++17 -lnvToolsExt -arch=sm_87
 
 .cpp.o: $(patsubst %.cpp,%.o,$(wildcard *.cpp))
-	$(CXX) -g -c $< -o $@ -O3 -march=native -forward-unknown-to-host-compiler -x cu -std=c++17
+    $(CXX) -g -c $< -o $@ -O3 -march=native -forward-unknown-to-host-compiler -x cu -std=c++17 -arch=sm_87
 
 clean:
-	rm -f $(PROGRAM) $(OBJECTS) report*
+    rm -f $(PROGRAM) $(OBJECTS) report*
 
 install:
-	cp $(PROGRAM) ../../bin
+    cp $(PROGRAM) ../../bin
 
 nothing:
-	@:
+    @:

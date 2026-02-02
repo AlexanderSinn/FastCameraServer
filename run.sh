@@ -6,7 +6,11 @@
 
 sudo jetson_clocks
 
+# sudo systemctl stop gdm
+
 #sudo OMP_NUM_THREADS=8 ~/emc_wrapper.sh \
-#/opt/nvidia/nsight-systems/2024.5.4/bin/nsys profile -t cuda,osrt,nvtx -y 15 -d 0.1 \
+#/opt/nvidia/nsight-systems/2024.5.4/bin/nsys profile -t cuda,osrt,nvtx ./FCS
+
 sudo ~/emc_wrapper.sh ./FCS
 
+# sudo systemctl start gdm
