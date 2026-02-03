@@ -1,21 +1,19 @@
 CXX=/usr/local/cuda/bin/nvcc
-SOURCES=main.cpp
+SOURCES=$(wildcard *.cpp)
 OBJECTS=$(SOURCES:.cpp=.o)
 PROGRAM=FCS
+FLAGS=-forward-unknown-to-host-compiler -O3 -march=native -std=c++17 -arch=sm_87
 
 all: $(PROGRAM)
 
 $(PROGRAM): $(OBJECTS)
-    $(CXX) -g $(OBJECTS) -o $@ -lm3api -O3 -march=native -forward-unknown-to-host-compiler -std=c++17 -lnvToolsExt -arch=sm_87
+	$(CXX) -g $(OBJECTS) -o $@ $(FLAGS) -lm3api -lnvToolsExt -ljetgpio
 
-.cpp.o: $(patsubst %.cpp,%.o,$(wildcard *.cpp))
-    $(CXX) -g -c $< -o $@ -O3 -march=native -forward-unknown-to-host-compiler -x cu -std=c++17 -arch=sm_87
+.cpp.o:
+	$(CXX) -g -c $< -o $@ $(FLAGS) -x cu
 
 clean:
-    rm -f $(PROGRAM) $(OBJECTS) report*
-
-install:
-    cp $(PROGRAM) ../../bin
+	rm -f $(PROGRAM) $(OBJECTS) report*
 
 nothing:
-    @:
+	@:

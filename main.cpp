@@ -13,20 +13,19 @@
 #endif
 
 #include "AllCameraParams.H"
+#include "gpio.H"
+#include "time.H"
+#include "reductions.H"
 
 #include <memory.h>
 #include <iostream>
 #include <cstdlib>
-#include <chrono>
 #include <vector>
 #include <map>
 #include <iomanip>
 #include <cmath>
 #include <array>
-
-#ifdef __NVCC__
-#include <cub/cub.cuh>
-#endif
+#include <thread>
 
 #ifdef min
 #undef min
@@ -36,7 +35,7 @@
 #undef max
 #endif
 
-#define SAVECALL(call) \
+#define XIMEA_SAVECALL(call) \
     { \
         XI_RETURN res = call; \
         if (res != XI_OK) { \
@@ -45,18 +44,6 @@
         } \
     }
 
-#ifdef __NVCC__
-#define CUDA_SAVECALL(call) \
-    { \
-        cudaError_t res = call; \
-        if (res != cudaSuccess) { \
-            printf("CUDA Error after %s (%s)\n", #call, cudaGetErrorString(res)); \
-            std::abort(); \
-        } \
-    }
-#else
-#define cudaStream_t int
-#endif
 
 template<class T>
 std::ostream& operator<< (std::ostream& os, std::vector<T> const& vec) {
@@ -93,152 +80,6 @@ void print_percent(std::vector<T> vec) {
     }
 
     std::cout << std::endl;
-}
-
-static
-void calc_moments(int im_height, int im_width, unsigned char * imager_ptr,
-                  std::vector<long long>& px_h_hist, std::vector<long long>& px_w_hist) {
-    float px_sum = 0;
-    float px_h_sum = 0;
-    float px_w_sum = 0;
-
-#ifdef _OPENMP
-#pragma omp parallel for reduction(+:px_sum,px_w_sum,px_h_sum)
-#endif
-    for (int j = 0; j < im_height; ++j) {
-        const float fj = static_cast<float>(j);
-        const auto ptr = imager_ptr + j * im_width;
-        float fi = 0;
-        for (int i = 0; i < im_width; ++i) {
-            float value = static_cast<float>(ptr[i]);
-            px_sum += value;
-            px_w_sum += value * fi;
-            px_h_sum += value * fj;
-
-            fi += 1.F;
-        }
-    }
-
-    px_h_hist[static_cast<int>(px_h_sum / px_sum)] += 1;
-    px_w_hist[static_cast<int>(px_w_sum / px_sum)] += 1;
-}
-
-static
-std::vector<int> make_tile_start(int nt, int imsize)
-{
-    std::vector<int> ret(nt + 1, 0);
-    for (int i = 0; i < nt + 1; ++i) {
-        ret[i] = (i * imsize) / nt;
-    }
-    return ret;
-}
-
-static
-void calc_tile(int nt_h, int nt_w, unsigned char* imager_ptr,
-    std::vector<int> const& tile_start_h, std::vector<int> const& tile_start_w,
-    std::vector<float>& tile_sum_h, std::vector<float>& tile_sum_w, int im_width)
-{
-#ifdef _OPENMP
-#pragma omp parallel for
-#endif
-    for (int it = 0; it < nt_w*nt_h; ++it) {
-        int it_h = it / nt_w;
-        int it_w = it - nt_w * it_h;
-
-        float px_sum = 0;
-        float px_h_sum = 0;
-        float px_w_sum = 0;
-
-        int tbegin_h = tile_start_h[it_h];
-        int tbegin_w = tile_start_w[it_w];
-        int tend_h = tile_start_h[it_h + 1];
-        int tend_w = tile_start_w[it_w + 1];
-
-        for (int j = tbegin_h; j < tend_h; ++j) {
-            const float fj = static_cast<float>(j);
-            const auto ptr = imager_ptr + j * im_width;
-            float fi = static_cast<float>(tbegin_w);
-            for (int i = tbegin_w; i < tend_w; ++i) {
-                float value = static_cast<float>(ptr[i]);
-                px_sum += value;
-                px_w_sum += value * fi;
-                px_h_sum += value * fj;
-
-                fi += 1;
-            }
-        }
-
-        tile_sum_w[it] += px_w_sum / px_sum;
-        tile_sum_h[it] += px_h_sum / px_sum;
-    }
-}
-
-#ifdef __NVCC__
-__launch_bounds__(512)
-__global__ void gpu_kernel(unsigned char * imdata, int im_width, int im_height, float * gloabl_agg)
-{
-    using BlockReduce = cub::BlockReduce<float, 32, cub::BLOCK_REDUCE_WARP_REDUCTIONS, 16>;
-
-    __shared__ typename BlockReduce::TempStorage temp_storage;
-
-    int tidw = threadIdx.x + blockIdx.x * blockDim.x;
-    int tidh = threadIdx.y + blockIdx.y * blockDim.y;
-
-    float im_value[4] = {0.F, 0.F, 0.F, 0.F};
-
-    if (tidw < im_width && tidh < im_height) {
-        auto pack_im = reinterpret_cast<uchar4*>(imdata);
-        uchar4 packed_data = pack_im[tidw + tidh * im_width];
-        im_value[0] = static_cast<float>(packed_data.x);
-        im_value[1] = static_cast<float>(packed_data.y);
-        im_value[2] = static_cast<float>(packed_data.z);
-        im_value[3] = static_cast<float>(packed_data.w);
-    }
-
-    float f_tidw = static_cast<float>(4*tidw);
-    float im_w = (
-        im_value[0] * f_tidw +
-        im_value[1] * (f_tidw + 1.F) +
-        im_value[2] * (f_tidw + 2.F) +
-        im_value[3] * (f_tidw + 3.F)
-    );
-    float im_h = static_cast<float>(tidh) * (
-        im_value[0] +
-        im_value[1] +
-        im_value[2] +
-        im_value[3]
-    );
-
-    float aggs = BlockReduce(temp_storage).Sum(im_value);
-    float aggw = BlockReduce(temp_storage).Sum(im_w);
-    float aggh = BlockReduce(temp_storage).Sum(im_h);
-
-    if (threadIdx.x == 0 && threadIdx.y == 0) {
-        atomicAdd(gloabl_agg + 0, aggs);
-        atomicAdd(gloabl_agg + 1, aggw);
-        atomicAdd(gloabl_agg + 2, aggh);
-    }
-}
-#endif
-
-void calc_gpu(unsigned char * imdata, int im_width, int im_height,
-              cudaStream_t& stream, float * gloabal_agg,
-              std::vector<long long>& px_h_hist, std::vector<long long>& px_w_hist) {
-#ifdef __NVCC__
-    gloabal_agg[0] = 0.F;
-    gloabal_agg[1] = 0.F;
-    gloabal_agg[2] = 0.F;
-    dim3 blockDim(32, 16);
-    dim3 gridDim;
-    gridDim.x = ((im_width+3)/4 + blockDim.x - 1)/blockDim.x;
-    gridDim.y = (im_height + blockDim.y - 1)/blockDim.y;
-    gpu_kernel<<<gridDim, blockDim, 0, stream>>>(imdata, im_width/4, im_height, gloabal_agg);
-    CUDA_SAVECALL(cudaStreamSynchronize(stream));
-
-    px_w_hist[static_cast<int>(gloabal_agg[1] / gloabal_agg[0])] += 1;
-    px_h_hist[static_cast<int>(gloabal_agg[2] / gloabal_agg[0])] += 1;
-#endif
-    (void)imdata, (void)im_width, (void)im_height;
 }
 
 
@@ -316,12 +157,16 @@ int _tmain(int argc, _TCHAR* argv[])
     cudaStream_t stream = 0;
 #endif
 
+    gpio_innit();
+
+    //std::atomic<int> thread_stop = 0;
+    //std::thread constant_trigger{trigger_thread, std::ref(thread_stop)};
+
     HANDLE xiH = NULL;
 
     // Retrieving a handle to the camera device
     printf("Opening first camera...\n");
-    SAVECALL(xiOpenDevice(0, &xiH);)
-
+    XIMEA_SAVECALL(xiOpenDevice(0, &xiH);)
 
     //for (auto& [pname, tname] : all_params) {
     //    char result[512] = {};
@@ -329,37 +174,45 @@ int _tmain(int argc, _TCHAR* argv[])
     //    std::cout << std::setw(5) << res << " " << std::setw(40) << tname << ": " << result << std::endl;
     //}
 
-    //const int im_width = 608;
-    //const int im_height = 608;
-    //const int im_width = 384;
-    //const int im_height = 384;
     const int im_width = 608;
     const int im_height = 608;
+    constexpr bool hw_trigger = false;
 
-    SAVECALL(xiSetParamInt(xiH, XI_PRM_DOWNSAMPLING, XI_DWN_2x2));
-    SAVECALL(xiSetParamInt(xiH, XI_PRM_DOWNSAMPLING_TYPE, XI_BINNING));
+    XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_DOWNSAMPLING, XI_DWN_2x2));
+    XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_DOWNSAMPLING_TYPE, XI_BINNING));
 
-    SAVECALL(xiSetParamInt(xiH, XI_PRM_EXPOSURE, 10));
-    SAVECALL(xiSetParamInt(xiH, XI_PRM_WIDTH, im_width));
-    SAVECALL(xiSetParamInt(xiH, XI_PRM_HEIGHT, im_height));
-    SAVECALL(xiSetParamFloat(xiH, XI_PRM_GAIN, 2.3F));
-    SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOURCE, XI_TRG_SOFTWARE));
-    //SAVECALL(xiSetParamInt(xiH, XI_PRM_BUFFER_POLICY, XI_BP_SAFE));
+    XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_EXPOSURE, 10));
+    XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_WIDTH, im_width));
+    XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_HEIGHT, im_height));
+    XIMEA_SAVECALL(xiSetParamFloat(xiH, XI_PRM_GAIN, 2.3F));
+    if constexpr (!hw_trigger) {
+        XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOURCE, XI_TRG_SOFTWARE));
+        //XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_GPO_SELECTOR, XI_GPO_PORT3));
+        //XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_GPO_MODE, XI_GPO_EXPOSURE_ACTIVE));
+    } else {
+        XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_GPI_SELECTOR, XI_GPI_PORT4));
+        XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_GPI_MODE, XI_GPI_TRIGGER));
+        XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOURCE, XI_TRG_EDGE_RISING));
+        XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_OVERLAP, XI_TRG_OVERLAP_OFF));
 
-    SAVECALL(xiSetParamInt(xiH, XI_PRM_BUFFER_POLICY, XI_BP_UNSAFE));
-    SAVECALL(xiSetParamInt(xiH, XI_PRM_IMAGE_DATA_FORMAT, XI_FRM_TRANSPORT_DATA));
-    SAVECALL(xiSetParamInt(xiH, XI_PRM_OUTPUT_DATA_BIT_DEPTH, 8));
-    SAVECALL(xiSetParamInt(xiH, XI_PRM_TRANSPORT_DATA_TARGET, XI_TRANSPORT_DATA_TARGET_ZEROCOPY));
+        XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_DEBOUNCE_T0, 1));
+        XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_DEBOUNCE_T1, 1));
+    }
+
+    XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_BUFFER_POLICY, XI_BP_UNSAFE));
+    XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_IMAGE_DATA_FORMAT, XI_FRM_TRANSPORT_DATA));
+    XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_OUTPUT_DATA_BIT_DEPTH, 8));
+    XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_TRANSPORT_DATA_TARGET, XI_TRANSPORT_DATA_TARGET_ZEROCOPY));
     int image_size = 0;
-    SAVECALL(xiGetParamInt(xiH, XI_PRM_IMAGE_PAYLOAD_SIZE, &image_size));
-    SAVECALL(xiSetParamInt(xiH, XI_PRM_ACQ_BUFFER_SIZE, 10 * image_size));
+    XIMEA_SAVECALL(xiGetParamInt(xiH, XI_PRM_IMAGE_PAYLOAD_SIZE, &image_size));
+    XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_ACQ_BUFFER_SIZE, 10 * image_size));
 
     printf("Starting acquisition...\n");
-    SAVECALL(xiStartAcquisition(xiH));
+    XIMEA_SAVECALL(xiStartAcquisition(xiH));
 
-    SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOFTWARE, 1));
+    XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOFTWARE, 1));
     while (xiGetImage(xiH, 1000, &image) == XI_OK) {}
-    //SAVECALL(xiGetImage(xiH, 5000, &image));
+    //XIMEA_SAVECALL(xiGetImage(xiH, 5000, &image));
 
     //print_image(image);
 
@@ -391,8 +244,10 @@ int _tmain(int argc, _TCHAR* argv[])
     if constexpr (do_gpu_moments) {
         for (int i=0; i<1000; ++i) {
             // warm up
-            SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOFTWARE, 1));
-            SAVECALL(xiGetImage(xiH, 5000, &image));
+            if constexpr (!hw_trigger) {
+                XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOFTWARE, 1));
+            }
+            XIMEA_SAVECALL(xiGetImage(xiH, 5000, &image));
             calc_gpu((unsigned char*)image.bp, im_width, im_height, stream, cuda_mem_ptr,
                     px_h_hist, px_w_hist);
         }
@@ -403,16 +258,18 @@ int _tmain(int argc, _TCHAR* argv[])
 
     for (int images = 0; images < expected_images; images++)
     {
-        auto t1 = std::chrono::steady_clock::now();
+        auto t1 = get_time();
 
         //nvtxRangePush("xiTrigSoftware");
-        SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOFTWARE, 1));
+        if constexpr (!hw_trigger) {
+            XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOFTWARE, 1));
+        }
         //nvtxRangePop();
         //nvtxRangePush("xiGetImage");
-        SAVECALL(xiGetImage(xiH, 5000, &image));
+        XIMEA_SAVECALL(xiGetImage(xiH, 5000, &image));
         //nvtxRangePop();
 
-        auto t2 = std::chrono::steady_clock::now();
+        auto t2 = get_time();
 
         if constexpr (do_moments) {
             calc_moments(im_height, im_width, (unsigned char*)image.bp, px_h_hist, px_w_hist);
@@ -430,17 +287,15 @@ int _tmain(int argc, _TCHAR* argv[])
             //nvtxRangePop();
         }
 
-        auto t3 = std::chrono::steady_clock::now();
-
-        {
-            auto delta = std::chrono::duration<double, std::micro>(t2 - t1);
-            time_hist1[std::max(std::min(static_cast<int>(delta.count()), static_cast<int>(time_hist1.size() - 1)), 0)] += 1;
+        if constexpr (hw_trigger) {
+            gpio_t2();
         }
 
-        {
-            auto delta = std::chrono::duration<double, std::micro>(t3 - t1);
-            time_hist2[std::max(std::min(static_cast<int>(delta.count()), static_cast<int>(time_hist2.size() - 1)), 0)] += 1;
-        }
+        auto t3 = get_time();
+
+        time_hist1[std::max(std::min(static_cast<int>(time_diff_us(t1, t2)), static_cast<int>(time_hist1.size() - 1)), 0)] += 1;
+
+        time_hist2[std::max(std::min(static_cast<int>(time_diff_us(t1, t3)), static_cast<int>(time_hist2.size() - 1)), 0)] += 1;
 
         if (images > 0) {
             dropped_frames += std::max<long long>((image.nframe - last_image_num - 1), 0);
@@ -469,9 +324,14 @@ int _tmain(int argc, _TCHAR* argv[])
     std::cout << "duplicate_frames = " << duplicate_frames << std::endl;
 
     printf("Stopping acquisition...\n");
-    SAVECALL(xiStopAcquisition(xiH));
-    SAVECALL(xiCloseDevice(xiH));
+    XIMEA_SAVECALL(xiStopAcquisition(xiH));
+    XIMEA_SAVECALL(xiCloseDevice(xiH));
     printf("Done\n");
+
+    //thread_stop.store(1);
+    //constant_trigger.join();
+
+    gpio_exit();
 
 #ifdef __NVCC__
     CUDA_SAVECALL(cudaStreamDestroy(stream));
