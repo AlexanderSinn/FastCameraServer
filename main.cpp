@@ -157,7 +157,7 @@ int _tmain(int argc, _TCHAR* argv[])
     cudaStream_t stream = 0;
 #endif
 
-    gpio_innit();
+    //gpio_innit();
 
     //std::atomic<int> thread_stop = 0;
     //std::thread constant_trigger{trigger_thread, std::ref(thread_stop)};
@@ -174,11 +174,22 @@ int _tmain(int argc, _TCHAR* argv[])
     //    std::cout << std::setw(5) << res << " " << std::setw(40) << tname << ": " << result << std::endl;
     //}
 
-    const int im_width = 608;
-    const int im_height = 608;
+    int im_width = 2*19*32;
+    int im_height = 2*19*32;
+
+    std::cout << "width" << std::endl;
+    std::cin >> im_width;
+    im_width *= 32;
+    std::cout << "height" << std::endl;
+    std::cin >> im_height;
+    im_height *= 32;
+
     constexpr bool hw_trigger = false;
 
-    XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_DOWNSAMPLING, XI_DWN_2x2));
+    std::cout << "image size " << im_width << " " << im_height
+              << " num pixel " << im_height * im_width << std::endl;
+
+    //XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_DOWNSAMPLING, XI_DWN_2x2));
     XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_DOWNSAMPLING_TYPE, XI_BINNING));
 
     XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_EXPOSURE, 10));
@@ -288,7 +299,7 @@ int _tmain(int argc, _TCHAR* argv[])
         }
 
         if constexpr (hw_trigger) {
-            gpio_t2();
+            //gpio_t2();
         }
 
         auto t3 = get_time();
@@ -331,7 +342,7 @@ int _tmain(int argc, _TCHAR* argv[])
     //thread_stop.store(1);
     //constant_trigger.join();
 
-    gpio_exit();
+    //gpio_exit();
 
 #ifdef __NVCC__
     CUDA_SAVECALL(cudaStreamDestroy(stream));
