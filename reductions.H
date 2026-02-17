@@ -43,6 +43,8 @@ void calc_moments(int im_height, int im_width, unsigned char * imager_ptr,
 
     px_h_hist[static_cast<int>(px_h_sum / px_sum)] += 1;
     px_w_hist[static_cast<int>(px_w_sum / px_sum)] += 1;
+
+    //printf("CPU %f %f %f\n", (double)px_sum, (double)px_h_sum, (double)px_w_sum);
 }
 
 static
@@ -97,7 +99,8 @@ void calc_tile(int nt_h, int nt_w, unsigned char* imager_ptr,
 
 #ifdef __NVCC__
 __launch_bounds__(512)
-__global__ void gpu_kernel(unsigned char * imdata, int im_width, int im_height, float * gloabl_agg)
+__global__ void gpu_kernel(unsigned char * imdata, int im_width, int im_height, float * gloabl_agg,
+                           float cutoff_value)
 {
     using BlockReduce = cub::BlockReduce<float, 32, cub::BLOCK_REDUCE_WARP_REDUCTIONS, 16>;
 
@@ -117,6 +120,11 @@ __global__ void gpu_kernel(unsigned char * imdata, int im_width, int im_height, 
         im_value[3] = static_cast<float>(packed_data.w);
     }
 
+    im_value[0] = im_value[0] >= cutoff_value ? im_value[0] : 0.F;
+    im_value[1] = im_value[1] >= cutoff_value ? im_value[1] : 0.F;
+    im_value[2] = im_value[2] >= cutoff_value ? im_value[2] : 0.F;
+    im_value[3] = im_value[3] >= cutoff_value ? im_value[3] : 0.F;
+
     float f_tidw = static_cast<float>(4*tidw);
     float im_w = (
         im_value[0] * f_tidw +
@@ -132,7 +140,9 @@ __global__ void gpu_kernel(unsigned char * imdata, int im_width, int im_height, 
     );
 
     float aggs = BlockReduce(temp_storage).Sum(im_value);
+    __syncthreads();
     float aggw = BlockReduce(temp_storage).Sum(im_w);
+    __syncthreads();
     float aggh = BlockReduce(temp_storage).Sum(im_h);
 
     if (threadIdx.x == 0 && threadIdx.y == 0) {
@@ -145,7 +155,8 @@ __global__ void gpu_kernel(unsigned char * imdata, int im_width, int im_height, 
 
 void calc_gpu(unsigned char * imdata, int im_width, int im_height,
               cudaStream_t& stream, float * gloabal_agg,
-              std::vector<long long>& px_h_hist, std::vector<long long>& px_w_hist) {
+              std::vector<long long>& px_h_hist, std::vector<long long>& px_w_hist,
+              float cutoff_value) {
 #ifdef __NVCC__
     gloabal_agg[0] = 0.F;
     gloabal_agg[1] = 0.F;
@@ -154,11 +165,16 @@ void calc_gpu(unsigned char * imdata, int im_width, int im_height,
     dim3 gridDim;
     gridDim.x = ((im_width+3)/4 + blockDim.x - 1)/blockDim.x;
     gridDim.y = (im_height + blockDim.y - 1)/blockDim.y;
-    gpu_kernel<<<gridDim, blockDim, 0, stream>>>(imdata, im_width/4, im_height, gloabal_agg);
+    gpu_kernel<<<gridDim, blockDim, 0, stream>>>(imdata, im_width/4, im_height, gloabal_agg,
+                                                 cutoff_value);
     CUDA_SAVECALL(cudaStreamSynchronize(stream));
 
-    px_w_hist[static_cast<int>(gloabal_agg[1] / gloabal_agg[0])] += 1;
-    px_h_hist[static_cast<int>(gloabal_agg[2] / gloabal_agg[0])] += 1;
+    if (gloabal_agg[0] > 0.F) {
+        px_w_hist[static_cast<int>(gloabal_agg[1] / gloabal_agg[0])] += 1;
+        px_h_hist[static_cast<int>(gloabal_agg[2] / gloabal_agg[0])] += 1;
+    }
+
+    //printf("GPU %f %f %f\n", (double)gloabal_agg[0], (double)gloabal_agg[2], (double)gloabal_agg[1]);
 #endif
     (void)imdata, (void)im_width, (void)im_height;
 }

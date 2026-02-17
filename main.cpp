@@ -260,7 +260,7 @@ int _tmain(int argc, _TCHAR* argv[])
             }
             XIMEA_SAVECALL(xiGetImage(xiH, 5000, &image));
             calc_gpu((unsigned char*)image.bp, im_width, im_height, stream, cuda_mem_ptr,
-                    px_h_hist, px_w_hist);
+                    px_h_hist, px_w_hist, 9.F);
         }
     }
 
@@ -294,7 +294,7 @@ int _tmain(int argc, _TCHAR* argv[])
         if constexpr (do_gpu_moments) {
             //nvtxRangePush("calc_gpu");
             calc_gpu((unsigned char*)image.bp, im_width, im_height, stream, cuda_mem_ptr,
-                     px_h_hist, px_w_hist);
+                     px_h_hist, px_w_hist, 9.F);
             //nvtxRangePop();
         }
 
