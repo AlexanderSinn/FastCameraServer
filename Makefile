@@ -2,7 +2,7 @@ CXX=/usr/local/cuda/bin/nvcc
 SOURCES=$(wildcard *.cpp)
 OBJECTS=$(SOURCES:.cpp=.o)
 PROGRAM=FCS
-FLAGS=-forward-unknown-to-host-compiler -O3 -march=native -std=c++17 -arch=sm_87
+FLAGS=-forward-unknown-to-host-compiler -O3 -march=native -std=c++17 -arch=sm_87 --extended-lambda --expt-relaxed-constexpr
 
 all: $(PROGRAM)
 

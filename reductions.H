@@ -2,20 +2,7 @@
 
 #include <vector>
 
-#ifdef __NVCC__
-#include <cub/cub.cuh>
-#define CUDA_SAVECALL(call) \
-    { \
-        cudaError_t res = call; \
-        if (res != cudaSuccess) { \
-            printf("CUDA Error after %s (%s)\n", #call, cudaGetErrorString(res)); \
-            std::abort(); \
-        } \
-    }
-#else
-#define cudaStream_t int
-#endif
-
+#include "gpu.H"
 
 static
 void calc_moments(int im_height, int im_width, unsigned char * imager_ptr,

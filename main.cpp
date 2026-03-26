@@ -16,6 +16,7 @@
 #include "gpio.H"
 #include "time.H"
 #include "reductions.H"
+#include "laser_params.H"
 
 #include <memory.h>
 #include <iostream>
@@ -250,7 +251,8 @@ int _tmain(int argc, _TCHAR* argv[])
 
     constexpr bool do_moments = false;
     constexpr bool do_tiles = false;
-    constexpr bool do_gpu_moments = true;
+    constexpr bool do_gpu_moments = false;
+    constexpr bool do_gpu_laser_params = true;
 
     if constexpr (do_gpu_moments) {
         for (int i=0; i<1000; ++i) {
@@ -261,6 +263,20 @@ int _tmain(int argc, _TCHAR* argv[])
             XIMEA_SAVECALL(xiGetImage(xiH, 5000, &image));
             calc_gpu((unsigned char*)image.bp, im_width, im_height, stream, cuda_mem_ptr,
                     px_h_hist, px_w_hist, 9.F);
+        }
+    }
+
+    TempMemory tmp_mem{};
+
+    if constexpr (do_gpu_laser_params) {
+        for (int i=0; i<1000; ++i) {
+            // warm up
+            if constexpr (!hw_trigger) {
+                XIMEA_SAVECALL(xiSetParamInt(xiH, XI_PRM_TRG_SOFTWARE, 1));
+            }
+            XIMEA_SAVECALL(xiGetImage(xiH, 5000, &image));
+            tmp_mem.image_ptr = (unsigned char*)image.bp;
+            characterize_laser(im_height, im_width, tmp_mem, stream);
         }
     }
 
@@ -298,6 +314,13 @@ int _tmain(int argc, _TCHAR* argv[])
             //nvtxRangePop();
         }
 
+        LaserCharacterizingParameters lp{};
+
+        if constexpr (do_gpu_laser_params) {
+            tmp_mem.image_ptr = (unsigned char*)image.bp;
+            lp = characterize_laser(im_height, im_width, tmp_mem, stream);
+        }
+
         if constexpr (hw_trigger) {
             //gpio_t2();
         }
@@ -314,6 +337,9 @@ int _tmain(int argc, _TCHAR* argv[])
         }
         last_image_num = image.nframe;
 
+        if constexpr (do_gpu_laser_params) {
+            print_params(lp);
+        }
     }
 
     std::cout << "time_hist1 = " << time_hist1 << std::endl;
@@ -343,6 +369,8 @@ int _tmain(int argc, _TCHAR* argv[])
     //constant_trigger.join();
 
     //gpio_exit();
+
+    free_temp_memory(tmp_mem);
 
 #ifdef __NVCC__
     CUDA_SAVECALL(cudaStreamDestroy(stream));
