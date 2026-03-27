@@ -133,7 +133,7 @@ __global__ void histogramm_kernel (
     unsigned int * hist
 )
 {
-    constexpr unsigned char low_clip = 10;
+    constexpr unsigned char low_clip = 0;
     __shared__ unsigned int shared_hist[256];
 
     shared_hist[threadIdx.x] = 0;
@@ -164,7 +164,7 @@ void launch_hist (int im_width, int im_height,
     unsigned int * hist,
     cudaStream_t stream
 ) {
-    int griddim = std::min(256,
+    int griddim = std::min(80,
         (im_width * im_height + 255)/256
     );
     histogramm_kernel<<<griddim, 256, 0, stream>>>(im_width, im_height, imdata, bgdata, hist);
