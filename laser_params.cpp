@@ -125,7 +125,7 @@ void Reduce2D (int nx, int ny, T* out, F f, U u, void*&p, std::size_t& sz, cudaS
 }
 
 #ifdef __NVCC__
-__launch_bounds__(256)
+__launch_bounds__(1024)
 __global__ void histogramm_kernel (
     int im_width, int im_height,
     unsigned char * imdata,
@@ -134,27 +134,41 @@ __global__ void histogramm_kernel (
 )
 {
     constexpr unsigned char low_clip = 0;
-    __shared__ unsigned int shared_hist[256];
+    constexpr int duplicate = 4;
+    __shared__ unsigned int shared_hist[256][duplicate];
 
-    shared_hist[threadIdx.x] = 0;
-
-    __syncthreads();
-
-    const int griddim = gridDim.x * 256;
-
-    for (int i=threadIdx.x + 256 * blockIdx.x; i < im_width*im_height; i += griddim) {
-        auto im_val = imdata[i];
-        auto bg_val = bgdata[i];
-
-        if (im_val >= bg_val + low_clip) {
-            atomicAdd(shared_hist + (im_val - bg_val), 1);
+    if (threadIdx.x < 256) {
+        for (int i=0; i<duplicate; ++i) {
+            shared_hist[threadIdx.x][i] = 0;
         }
     }
 
     __syncthreads();
 
-    if (shared_hist[threadIdx.x] != 0) {
-        atomicAdd(hist + threadIdx.x, shared_hist[threadIdx.x]);
+    const int griddim = gridDim.x * 1024;
+    const int locid = threadIdx.x % duplicate;
+
+#pragma unroll 8
+    for (int i=threadIdx.x + 1024 * blockIdx.x; i < im_width*im_height; i += griddim) {
+        auto im_val = imdata[i];
+        auto bg_val = bgdata[i];
+
+        if (im_val >= bg_val + low_clip) {
+            atomicAdd(&(shared_hist[im_val - bg_val][locid]), 1);
+        }
+    }
+
+    __syncthreads();
+
+    if (threadIdx.x < 256) {
+        unsigned int total = 0;
+        for (int i=0; i<duplicate; ++i) {
+            total += shared_hist[threadIdx.x][i];
+        }
+
+        if (total != 0) {
+            atomicAdd(hist + threadIdx.x, total);
+        }
     }
 }
 
@@ -164,10 +178,10 @@ void launch_hist (int im_width, int im_height,
     unsigned int * hist,
     cudaStream_t stream
 ) {
-    int griddim = std::min(80,
-        (im_width * im_height + 255)/256
+    int griddim = std::min(16,
+        (im_width * im_height + 1023)/1024
     );
-    histogramm_kernel<<<griddim, 256, 0, stream>>>(im_width, im_height, imdata, bgdata, hist);
+    histogramm_kernel<<<griddim, 1024, 0, stream>>>(im_width, im_height, imdata, bgdata, hist);
 }
 
 #else
