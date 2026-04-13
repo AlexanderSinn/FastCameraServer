@@ -160,6 +160,10 @@ int _tmain(int argc, _TCHAR* argv[])
 
     //gpio_innit();
 
+    test_gpio();
+
+    /*
+
     //std::atomic<int> thread_stop = 0;
     //std::thread constant_trigger{trigger_thread, std::ref(thread_stop)};
 
@@ -368,9 +372,11 @@ int _tmain(int argc, _TCHAR* argv[])
     //thread_stop.store(1);
     //constant_trigger.join();
 
+    free_temp_memory(tmp_mem);
+    */
+
     //gpio_exit();
 
-    free_temp_memory(tmp_mem);
 
 #ifdef __NVCC__
     CUDA_SAVECALL(cudaStreamDestroy(stream));
