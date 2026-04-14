@@ -68,9 +68,10 @@ void test_gpio () {
 
     GPIO_SAVECALL(gpioSetMode(38, JET_OUTPUT));
 
-    GPIO_SAVECALL(gpioSetPWMfrequency(18, 1593000/50));
+    GPIO_SAVECALL(gpioSetPWMfrequency(18, 1593000));
 
     int dutycycle = 128;
+    int old_dutycycle = 128;
     //int subcycle = 0;
 
     std::chrono::microseconds timeout(10);
@@ -82,29 +83,39 @@ void test_gpio () {
 
         GPIO_SAVECALL(gpioWrite(38, 1));
 
-        //GPIO_SAVECALL(gpioPWM(18, dutycycle));
+        GPIO_SAVECALL(gpioPWM(18, dutycycle));
+
+        //GPIO_SAVECALL(gpioWrite(38, 0));
+
+        sleep_us(500);
+
+        /*
 
         for (int i = 0; i < 500; ++i) {
 
             //dutycycle = static_cast<int>(256 * (std::sin(i / 10.)*0.5 + 0.5));
 
             dutycycle = static_cast<int>(
-                256 * batman(i * (14./500.) - 7.)
+                256 * batman(i * (13.98/500.) - 6.99)
             );
 
             GPIO_SAVECALL(gpioPWM(18, dutycycle));
 
-            sleep_us(50);
+            sleep_us(30);
         }
+
+        */
 
 
         GPIO_SAVECALL(gpioWrite(38, 0));
 
-        GPIO_SAVECALL(gpioPWM(18, 0));
+        GPIO_SAVECALL(gpioPWM(18, old_dutycycle));
+        //GPIO_SAVECALL(gpioPWM(18, 0));
 
-        sleep_us(500*50);
+        sleep_us(500);
 
         if (next_dutycycle.wait_for(timeout) == std::future_status::ready) {
+            old_dutycycle = dutycycle;
             dutycycle = next_dutycycle.get();
             if (dutycycle < 0) {
                 break;
@@ -122,6 +133,12 @@ void test_gpio () {
 
         //dutycycle = static_cast<int>(256 * (std::sin(time / 200)*0.5 + 0.5));
     }
+
+    GPIO_SAVECALL(gpioWrite(38, 0));
+
+
+    GPIO_SAVECALL(gpioPWM(18, 0));
+
 
     gpioTerminate();
 }
