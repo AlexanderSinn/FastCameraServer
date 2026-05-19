@@ -14,3 +14,7 @@ void gpio_t1();
 void gpio_t2();
 
 void trigger_thread(std::atomic<int>& atom);
+
+
+
+void test_function(double * data, long long size);

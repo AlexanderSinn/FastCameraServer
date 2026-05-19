@@ -68,7 +68,7 @@ void print_percent(std::vector<T> vec) {
 
     std::cout << "fraction:";
 
-    const std::array arr{0.5, 0.9, 0.99, 0.999};
+    const std::array arr{0.5, 0.9, 0.99, 0.999, 1.};
     for (auto frac : arr) {
         T parsum = 0;
         for (int i = 0; i < vec.size(); ++i) {
@@ -160,7 +160,32 @@ int _tmain(int argc, _TCHAR* argv[])
 
     //gpio_innit();
 
-    test_gpio();
+
+    {
+    std::vector<long long> time_hist1(2000, 0);
+
+    std::vector<double> test_data(500*1000, 0.);
+
+    constexpr int expected_images = 10000;
+
+    std::cout << "Begin" << std::endl;
+
+    for (int images = 0; images < expected_images; images++)
+    {
+        auto t1 = get_time();
+
+        test_function(test_data.data(), test_data.size());
+
+        auto t2 = get_time();
+
+        time_hist1[std::max(std::min(static_cast<int>(time_diff_us(t1, t2)), static_cast<int>(time_hist1.size() - 1)), 0)] += 1;
+
+    }
+
+    std::cout << "time_hist1 = " << time_hist1 << std::endl;
+    print_percent(time_hist1);
+
+    }
 
     /*
 

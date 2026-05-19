@@ -182,3 +182,9 @@ void trigger_thread(std::atomic<int>& atom) {
     }
 }
 
+void test_function(double * data, long long size) {
+
+    for (long long i=0; i<size; ++i) {
+        data[i] += static_cast<double>(i);
+    }
+}

@@ -14,3 +14,11 @@ sudo jetson_clocks
 sudo ~/emc_wrapper.sh ./FCS
 
 # sudo systemctl start gdm
+
+
+
+
+
+# cd /home/jetson-user/Desktop/jetson_doocs
+# /opt/nvidia/nsight-systems/2024.5.4/bin/nsys profile -t cuda,osrt,nvtx -y 30 -d 10 \
+# ./builddir/jetson_doocs_server -c ./jetson_doocs.conf
