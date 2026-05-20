@@ -3,6 +3,7 @@
 #include <atomic>
 
 void test_gpio ();
+void test_gpio2 ();
 
 void gpio_innit();
 

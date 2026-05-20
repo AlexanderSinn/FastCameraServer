@@ -2,11 +2,11 @@
 
 #include "stdafx.h"
 
-#ifdef WIN32
-#include "xiApi.h"       // Windows
-#else
-#include <m3api/xiApi.h> // Linux, OSX
-#endif
+// #ifdef WIN32
+// #include "xiApi.h"       // Windows
+// #else
+// #include <m3api/xiApi.h> // Linux, OSX
+// #endif
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -83,7 +83,7 @@ void print_percent(std::vector<T> vec) {
     std::cout << std::endl;
 }
 
-
+/*
 inline
 void print_image(XI_IMG& image) {
     std::cout << "size " << image.size << '\n';
@@ -123,69 +123,72 @@ void print_image(XI_IMG& image) {
     std::cout << '\n';
 }
 
+*/
 
 int _tmain(int argc, _TCHAR* argv[])
 {
     // initialize omp
-#ifdef _OPENMP
-    omp_set_num_threads(8);
-#pragma omp parallel
-    {
-#pragma omp critical
-        printf("Initialized omp thread %d\n", omp_get_thread_num());
-    }
-#endif
+// #ifdef _OPENMP
+//     omp_set_num_threads(8);
+// #pragma omp parallel
+//     {
+// #pragma omp critical
+//         printf("Initialized omp thread %d\n", omp_get_thread_num());
+//     }
+// #endif
 
     //std::cout << "Press any key to start..." << std::endl;
     //char temp_char = 0;
     //std::cin >> temp_char;
 
     // image buffer
-    XI_IMG image;
-    memset(&image, 0, sizeof(image));
-    image.size = SIZE_XI_IMG_V2;
-    image.size = sizeof(image);
+//     XI_IMG image;
+//     memset(&image, 0, sizeof(image));
+//     image.size = SIZE_XI_IMG_V2;
+//     image.size = sizeof(image);
 
-    float * cuda_mem_ptr = nullptr;
-#ifdef __NVCC__
-    CUDA_SAVECALL(cudaMallocManaged(&cuda_mem_ptr, sizeof(float) * 3));
-    int priority_low = 0;
-    int priority_high = 0;
-    CUDA_SAVECALL(cudaDeviceGetStreamPriorityRange(&priority_low, &priority_high));
-    cudaStream_t stream;
-    CUDA_SAVECALL(cudaStreamCreateWithPriority(&stream, cudaStreamNonBlocking, priority_high));
-#else
-    cudaStream_t stream = 0;
-#endif
+//     float * cuda_mem_ptr = nullptr;
+// #ifdef __NVCC__
+//     CUDA_SAVECALL(cudaMallocManaged(&cuda_mem_ptr, sizeof(float) * 3));
+//     int priority_low = 0;
+//     int priority_high = 0;
+//     CUDA_SAVECALL(cudaDeviceGetStreamPriorityRange(&priority_low, &priority_high));
+//     cudaStream_t stream;
+//     CUDA_SAVECALL(cudaStreamCreateWithPriority(&stream, cudaStreamNonBlocking, priority_high));
+// #else
+//     cudaStream_t stream = 0;
+// #endif
 
-    //gpio_innit();
+    // gpio_innit();
+
+    test_gpio2();
 
 
-    {
-    std::vector<long long> time_hist1(2000, 0);
+    // {
+    // std::vector<long long> time_hist1(2000, 0);
 
-    std::vector<double> test_data(500*1000, 0.);
+    // std::vector<double> test_data(500*1000, 0.);
 
-    constexpr int expected_images = 10000;
+    // constexpr int expected_images = 10000;
 
-    std::cout << "Begin" << std::endl;
+    // std::cout << "Begin" << std::endl;
 
-    for (int images = 0; images < expected_images; images++)
-    {
-        auto t1 = get_time();
+    // for (int images = 0; images < expected_images; images++)
+    // {
+    //     auto t1 = get_time();
 
-        test_function(test_data.data(), test_data.size());
+    //     test_function(test_data.data(), test_data.size());
 
-        auto t2 = get_time();
+    //     auto t2 = get_time();
 
-        time_hist1[std::max(std::min(static_cast<int>(time_diff_us(t1, t2)), static_cast<int>(time_hist1.size() - 1)), 0)] += 1;
+    //     time_hist1[std::max(std::min(static_cast<int>(time_diff_us(t1, t2)), static_cast<int>(time_hist1.size() - 1)), 0)] += 1;
 
-    }
+    // }
 
-    std::cout << "time_hist1 = " << time_hist1 << std::endl;
-    print_percent(time_hist1);
+    // std::cout << "time_hist1 = " << time_hist1 << std::endl;
+    // print_percent(time_hist1);
 
-    }
+    // }
 
     /*
 
@@ -403,10 +406,10 @@ int _tmain(int argc, _TCHAR* argv[])
     //gpio_exit();
 
 
-#ifdef __NVCC__
-    CUDA_SAVECALL(cudaStreamDestroy(stream));
-    CUDA_SAVECALL(cudaFree(cuda_mem_ptr));
-#endif
+// #ifdef __NVCC__
+//     CUDA_SAVECALL(cudaStreamDestroy(stream));
+//     CUDA_SAVECALL(cudaFree(cuda_mem_ptr));
+// #endif
 
     return 0;
 }

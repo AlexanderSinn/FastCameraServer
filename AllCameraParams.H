@@ -1,4 +1,5 @@
 #pragma once
+/*
 
 #ifdef WIN32
 #include "xiApi.h"       // Windows
@@ -276,3 +277,5 @@ std::vector<std::pair<const char*, const char*>> all_params = {
     {XI_PRM_USER_SET_LOAD                              ,"XI_PRM_USER_SET_LOAD"                              },// Loads the User Set specified by User Set Selector to the device and makes it active.
     {XI_PRM_USER_SET_DEFAULT                           ,"XI_PRM_USER_SET_DEFAULT"                           }// Selects the feature User Set to load and make active by default when the device is reset. Change might affect default mode in other applications, e.g. CamTool. XI_USER_SET_SELECTOR
 };
+
+*/
